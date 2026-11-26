@@ -1,0 +1,83 @@
+#include <SDL3/SDL.h>
+#include <SDL3_ttf/SDL_ttf.h>
+#include <memory>
+#include <iostream>
+
+export module graphic;
+
+
+// C言語のポインタをC++のスマートポインタで自動解放する定義
+struct SDLDeleter {
+    void operator()(SDL_Window* w) const { SDL_DestroyWindow(w); }
+    void operator()(SDL_GPUDevice* d) const { SDL_DestroyGPUDevice(d); }
+    void operator()(TTF_Font* f) const { TTF_CloseFont(f); }
+    void operator()(TTF_TextEngine* e) const { TTF_DestroyGPUTextEngine(e); }
+};
+
+
+export int graphic_main(int argc, char* argv[]) {
+    // 1. SDLとTTFの初期化
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) || !TTF_Init()) {
+        std::cerr << "初期化失敗: " << SDL_GetError() << "\n";
+        return 1;
+    }
+
+    // 2. ウィンドウ作成（C++スマートポインタで管理）
+    std::unique_ptr<SDL_Window, SDLDeleter> window(
+        SDL_CreateWindow("Novel Engine (3D + 2D)", 1280, 720, SDL_WINDOW_RESIZABLE)
+    );
+
+    // 3. DirectX 12 / Vulkan / Metal を自動選択するGPUデバイスの作成
+    std::unique_ptr<SDL_GPUDevice, SDLDeleter> gpu(
+        SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL, true, nullptr)
+    );
+    SDL_ClaimWindowForGPUDevice(gpu.get(), window.get());
+
+    // 4. GPU対応の日本語テキストエンジンとフォントの読み込み
+    std::unique_ptr<TTF_TextEngine, SDLDeleter> textEngine(
+        TTF_CreateGPUTextEngine(gpu.get())
+    );
+    // ※環境にある日本語フォント(.ttf / .otf)のパスを指定してください
+    std::unique_ptr<TTF_Font, SDLDeleter> font(
+        TTF_OpenFont("NotoSansJP-Regular.ttf", 28.0f)
+    );
+
+    // 5. メインループ（ノベルゲームの心臓部）
+    bool running = true;
+    SDL_Event event;
+    while (running) {
+        
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_EVENT_QUIT) running = false;
+            if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_RETURN) {
+                // TODO: 次のセリフへ進む処理
+            }
+        }
+
+        // --- 描画処理 ---
+        SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(gpu.get());
+        SDL_GPUTexture* swapchainTex = nullptr;
+        if (SDL_WaitAndAcquireGPUSwapchainTexture(cmd, window.get(), &swapchainTex, nullptr, nullptr) && swapchainTex) {
+            
+            // 画面クリア設定（紺色で背景を塗りつぶし）
+            SDL_GPUColorTargetInfo colorTarget = {};
+            colorTarget.texture = swapchainTex;
+            colorTarget.clear_color = { 0.1f, 0.12f, 0.2f, 1.0f };
+            colorTarget.load_op = SDL_GPU_LOADOP_CLEAR;
+            colorTarget.store_op = SDL_GPU_STOREOP_STORE;
+
+            SDL_GPURenderPass* renderPass = SDL_BeginGPURenderPass(cmd, &colorTarget, 1, nullptr);
+            
+            // TODO [レイヤー1]: 3D背景・3Dモデルの描画コマンド
+            // TODO [レイヤー2]: 立ち絵スプライトの描画コマンド
+            // TODO [レイヤー3]: メッセージ枠と日本語テキストの描画コマンド
+
+            SDL_EndGPURenderPass(renderPass);
+        }
+        SDL_SubmitGPUCommandBuffer(cmd);
+    }
+
+    TTF_Quit();
+    SDL_Quit();
+    return 0; // unique_ptrによりウィンドウやGPUリソースは自動解放される
+}
